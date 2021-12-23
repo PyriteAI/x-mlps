@@ -103,6 +103,7 @@ numpy==1.21.5
     #   opt-einsum
     #   optax
     #   scipy
+    #   torchvision
 opt-einsum==3.3.0
     # via
     #   -c jax-gpu.txt
@@ -125,6 +126,8 @@ pexpect==4.8.0
     # via ipython
 pickleshare==0.7.5
     # via ipython
+pillow==8.4.0
+    # via torchvision
 platformdirs==2.4.0
     # via
     #   black
@@ -187,6 +190,14 @@ tomli==1.2.3
     #   setuptools-scm
 toolz==0.11.2
     # via chex
+torch==1.10.1
+    # via
+    #   -r dev-requirements.in
+    #   torchvision
+torchvision==0.11.2
+    # via -r dev-requirements.in
+tqdm==4.62.3
+    # via -r dev-requirements.in
 traitlets==5.1.1
     # via
     #   ipython
@@ -198,6 +209,7 @@ typing-extensions==4.0.1
     #   gitpython
     #   jax
     #   optax
+    #   torch
 urllib3==1.26.7
     # via requests
 virtualenv==20.10.0
