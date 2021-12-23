@@ -98,8 +98,8 @@ class XMLP(hk.Module):
     def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
         x = hk.Linear(self.dim, name="proj_in")(inputs)
         for i in range(self.depth):
-            x = ResMLPXPatchSublayer(self.num_patches, self.dim, self.depth, name=f"x_patch_sublayer_{i}")(x)
-            x = ResMLPXChannelSublayer(self.dim, self.depth, name=f"x_channel_sublayer_{i}")(x)
+            x = ResMLPXPatchSublayer(self.num_patches, self.dim, depth=i + 1, name=f"x_patch_sublayer_{i}")(x)
+            x = ResMLPXChannelSublayer(self.dim, depth=i + 1, name=f"x_channel_sublayer_{i}")(x)
         x = PreAffine(self.dim, name="affine")(x)
         if self.num_classes is not None:
             x = reduce(x, "... n c -> ... c", "mean")
