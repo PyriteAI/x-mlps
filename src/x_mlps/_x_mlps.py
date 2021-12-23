@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal, Optional, Sequence
 
 import haiku as hk
 import jax
@@ -7,6 +7,7 @@ from einops import reduce
 
 from ._utils import group_by_prefix_and_trim
 
+SublayerFactory = Callable[[int, int, int], hk.Module]
 FFStrategy = Literal["mlpmixer", "resmlp"]
 
 
@@ -170,6 +171,33 @@ class XChannelSublayer(hk.Module):
             x = self.postnorm(x)
 
         return x + inputs
+
+
+class XBlock(hk.Module):
+    def __init__(
+        self,
+        num_patches: int,
+        dim: int,
+        depth: int,
+        sublayers: Sequence[SublayerFactory],
+        residual: bool = False,
+        name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+
+        self.num_patches = num_patches
+        self.dim = dim
+        self.depth = depth
+        self.sublayers = tuple(sublayers)
+        self.residual = residual
+
+    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+        x = inputs
+        for Sublayer in self.sublayers:
+            x = Sublayer(self.num_patches, self.dim, self.depth)(x)
+        if self.residual:
+            x += inputs
+        return x
 
 
 class XMLP(hk.Module):
