@@ -7,6 +7,8 @@ from einops import reduce
 
 from ._utils import group_by_prefix_and_trim
 
+FeedForwardFactory = Callable[[int, int, int], hk.Module]
+NormFactory = Callable[[int, int, int], hk.Module]
 SublayerFactory = Callable[[int, int, int], hk.Module]
 FFStrategy = Literal["mlpmixer", "resmlp"]
 
@@ -171,6 +173,41 @@ class XChannelSublayer(hk.Module):
             x = self.postnorm(x)
 
         return x + inputs
+
+
+class XSublayer(hk.Module):
+    def __init__(
+        self,
+        num_patches: int,
+        dim: int,
+        depth: int,
+        feedforward: FeedForwardFactory,
+        prenorm: Optional[NormFactory] = None,
+        postnorm: Optional[NormFactory] = None,
+        residual: bool = True,
+        name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+
+        self.num_patches = num_patches
+        self.dim = dim
+        self.depth = depth
+        self.feedforward = feedforward
+        self.prenorm = prenorm
+        self.postnorm = postnorm
+        self.residual = residual
+
+    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+        x = inputs
+        if self.prenorm is not None:
+            x = self.prenorm(self.num_patches, self.dim, self.depth)(x)
+        x = self.feedforward(self.num_patches, self.dim, self.depth)(x)
+        if self.postnorm is not None:
+            x = self.postnorm(self.num_patches, self.dim, self.depth)(x)
+        if self.residual:
+            x += inputs
+
+        return x
 
 
 class XBlock(hk.Module):
