@@ -12,15 +12,16 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from x_mlps import XMLP, Affine
+from x_mlps import XMLP
 
 # Model parameters
 PATCH_SIZE = 4
-DIM = 384
-DEPTH = 12
+DIM = 512
+DEPTH = 8
+PATCH_FF_DIM_HIDDEN = 256
 # Optimizer parameters
 INIT_VALUE = 0
-PEAK_VALUE = 1e-3
+PEAK_VALUE = 3e-4
 WARMUP_STEPS = 2000
 CLIPPING = 0.32
 # Training parameters
@@ -34,6 +35,10 @@ def collate_fn(batch):
     return np.stack(data, axis=0), np.array(target)
 
 
+def relu_squared(x):
+    return jax.nn.relu(x) ** 2
+
+
 def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
     @hk.vmap
     def model_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -42,13 +47,9 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
-            normalization=Affine,
             num_classes=num_classes,
-            patch_feedforward="resmlp",
-            patch_normalization=Affine,
-            patch_layer_scale=True,
-            channel_normalization=Affine,
-            channel_layer_scale=True,
+            patch_feedforward="mlpmixer",
+            patch_ff_dim_hidden=PATCH_FF_DIM_HIDDEN,
         )(x)
 
     return model_fn
