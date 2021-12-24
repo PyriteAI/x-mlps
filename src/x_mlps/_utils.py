@@ -9,8 +9,8 @@ def _string_begins_with(prefix, str):
 
 
 def pick_and_pop(keys, d):
-    values = list(map(lambda key: d.pop(key), keys))
-    return dict(zip(keys, values))
+    values = list(map(lambda key: d.pop(key, None), keys))
+    return values
 
 
 def group_dict_by_key(cond, d):
