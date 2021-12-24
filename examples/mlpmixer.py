@@ -12,7 +12,7 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from x_mlps import XMLP
+from x_mlps import XMLP, mlpmixer_block_factory
 
 # Model parameters
 PATCH_SIZE = 4
@@ -35,10 +35,6 @@ def collate_fn(batch):
     return np.stack(data, axis=0), np.array(target)
 
 
-def relu_squared(x):
-    return jax.nn.relu(x) ** 2
-
-
 def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
     @hk.vmap
     def model_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -47,9 +43,10 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
+            block=mlpmixer_block_factory,
+            normalization=lambda *_: hk.LayerNorm(-1, create_scale=True, create_offset=True, name="norm"),
             num_classes=num_classes,
-            patch_feedforward="mlpmixer",
-            patch_ff_dim_hidden=PATCH_FF_DIM_HIDDEN,
+            xpatch_ff_dim_hidden=PATCH_FF_DIM_HIDDEN,
         )(x)
 
     return model_fn

@@ -12,7 +12,7 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from x_mlps import XMLP, Affine
+from x_mlps import XMLP, Affine, resmlp_block_factory
 
 # Model parameters
 PATCH_SIZE = 4
@@ -42,13 +42,9 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
+            block=resmlp_block_factory,
             normalization=Affine,
             num_classes=num_classes,
-            patch_feedforward="resmlp",
-            patch_normalization=Affine,
-            patch_layer_scale=True,
-            channel_normalization=Affine,
-            channel_layer_scale=True,
         )(x)
 
     return model_fn

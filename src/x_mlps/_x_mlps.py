@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Optional, Sequence
+from typing import Any, Callable, Literal, Optional, Protocol, Sequence
 
 import haiku as hk
 import jax
@@ -11,6 +11,11 @@ FeedForwardFactory = Callable[[int, int, int], hk.Module]
 NormFactory = Callable[[int, int, int], hk.Module]
 SublayerFactory = Callable[[int, int, int], hk.Module]
 FFStrategy = Literal["mlpmixer", "resmlp"]
+
+
+class BlockFactory(Protocol):
+    def __call__(self, num_patches: int, dim: int, depth: int, **kwargs: Any) -> hk.Module:
+        ...
 
 
 def _calc_layer_scale_eps(depth: int) -> float:
@@ -52,7 +57,7 @@ class LayerScale(hk.Module):
         return s * inputs
 
 
-class MLPMixerFeedForward(hk.Module):
+class MLPMixerXPatchFeedForward(hk.Module):
     def __init__(
         self,
         dim: int,
@@ -73,7 +78,7 @@ class MLPMixerFeedForward(hk.Module):
         return hk.Conv1D(self.dim, 1, data_format="NCW", name="conv_2")(x)
 
 
-class ResMLPFeedForward(hk.Module):
+class ResMLPXPatchFeedForward(hk.Module):
     def __init__(self, dim: int, name: Optional[str] = None, **kwargs):
         super().__init__(name=name)
 
@@ -83,96 +88,25 @@ class ResMLPFeedForward(hk.Module):
         return hk.Conv1D(self.dim, 1, data_format="NCW", name="conv")(inputs)
 
 
-class XPatchSublayer(hk.Module):
-    def __init__(
-        self,
-        num_patches: int,
-        dim: int,
-        depth: int,
-        normalization: Optional[Callable[[int, str], hk.Module]] = None,
-        feedforward: FFStrategy = "mlpmixer",
-        layer_affine: bool = False,
-        layer_scale: bool = False,
-        name: Optional[str] = None,
-        **kwargs,
-    ):
-        super().__init__(name=name)
-
-        if feedforward not in ["mlpmixer", "resmlp"]:
-            raise ValueError(f"unknown feedforward type: '{feedforward}'")
-        if normalization is None:
-            normalization = lambda dim, name: hk.LayerNorm(  # noqa: E731
-                -1, create_scale=True, create_offset=True, name=name
-            )
-        ff_kwargs, kwargs = group_by_prefix_and_trim("ff_", kwargs)
-
-        self.num_patches = num_patches
-        self.dim = dim
-        self.depth = depth
-        self.prenorm = normalization
-        if feedforward == "mlpmixer":
-            self.ff = MLPMixerFeedForward(self.num_patches, **ff_kwargs, name="ff")
-        elif feedforward == "resmlp":
-            self.ff = ResMLPFeedForward(self.num_patches, **ff_kwargs, name="ff")
-        if layer_affine:
-            self.postnorm = Affine(self.dim, init_scale=_calc_layer_scale_eps(depth), name="affine")
-        elif layer_scale:
-            self.postnorm = LayerScale(self.dim, self.depth, name="scale")
-        else:
-            self.postnorm = None
-
-    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
-        x = self.prenorm(self.dim, name="norm")(inputs)
-        x = self.ff(x)
-        if self.postnorm is not None:
-            x = self.postnorm(x)
-
-        return x + inputs
-
-
-class XChannelSublayer(hk.Module):
+class XChannelFeedForward(hk.Module):
     def __init__(
         self,
         dim: int,
-        depth: int,
         dim_hidden: Optional[int] = None,
         activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.gelu,
-        normalization: Optional[Callable[[int, str], hk.Module]] = None,
-        layer_affine: bool = False,
-        layer_scale: bool = False,
         name: Optional[str] = None,
     ):
         super().__init__(name=name)
 
-        if layer_affine and layer_scale:
-            raise ValueError("cannot have both layer_affine and layer_scale set to True")
-
-        if normalization is None:
-            normalization = lambda dim, name: hk.LayerNorm(  # noqa: E731
-                -1, create_scale=True, create_offset=True, name=name
-            )
-
         self.dim = dim
-        self.depth = depth
         self.dim_hidden = dim * 4 if dim_hidden is None else dim_hidden
         self.activation = activation
-        self.prenorm = normalization
-        if layer_affine:
-            self.postnorm = Affine(self.dim, init_scale=_calc_layer_scale_eps(depth), name="affine")
-        elif layer_scale:
-            self.postnorm = LayerScale(self.dim, self.depth, name="scale")
-        else:
-            self.postnorm = None
 
     def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
-        x = self.prenorm(self.dim, name="norm")(inputs)
-        x = hk.Linear(self.dim_hidden, name="linear_1")(x)
+        x = hk.Linear(self.dim_hidden, name="linear_1")(inputs)
         x = self.activation(x)
         x = hk.Linear(self.dim, name="linear_2")(x)
-        if self.postnorm is not None:
-            x = self.postnorm(x)
-
-        return x + inputs
+        return x
 
 
 class XSublayer(hk.Module):
@@ -243,57 +177,108 @@ class XMLP(hk.Module):
         num_patches: int,
         dim: int,
         depth: int,
+        block: BlockFactory,
+        normalization: Optional[NormFactory] = None,
         num_classes: Optional[int] = None,
-        normalization: Optional[Callable[[int, str], hk.Module]] = None,
-        patch_feedforward: FFStrategy = "mlpmixer",
         name: Optional[str] = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(name=name)
-
-        if normalization is None:
-            normalization = lambda dim, name: hk.LayerNorm(  # noqa: E731
-                -1, create_scale=True, create_offset=True, name=name
-            )
-
-        patch_kwargs, kwargs = group_by_prefix_and_trim("patch_", kwargs)
-        channel_kwargs, kwargs = group_by_prefix_and_trim("channel_", kwargs)
-        patch_kwargs["feedforward"] = patch_feedforward
-        patch_kwargs.pop("name", None)
-        channel_kwargs.pop("name", None)
 
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
-        self.num_classes = num_classes
+        self.block = block
         self.normalization = normalization
-        self.patch_kwargs = patch_kwargs
-        self.channel_kwargs = channel_kwargs
+        self.num_classes = num_classes
+        self.block_kwargs = kwargs
 
     def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
         x = hk.Linear(self.dim, name="proj_in")(inputs)
         for i in range(self.depth):
-            x = XPatchSublayer(
-                self.num_patches,
-                self.dim,
-                depth=i + 1,
-                **self.patch_kwargs,
-                name=f"x_patch_sublayer_{i + 1}",
-            )(x)
-            x = XChannelSublayer(self.dim, depth=i + 1, **self.channel_kwargs, name=f"x_channel_sublayer_{i + 1}")(x)
-        x = self.normalization(self.dim, name="norm")(x)
+            x = self.block(self.num_patches, self.dim, i + 1, **self.block_kwargs)(x)
+        if self.normalization is not None:
+            x = self.normalization(self.num_patches, self.dim, self.depth + 1)(x)
         if self.num_classes is not None:
             x = reduce(x, "... n c -> ... c", "mean")
             x = hk.Linear(self.num_classes, name="proj_out")(x)
         return x
 
 
+def mlpmixer_block_factory(num_patches: int, dim: int, depth: int, **kwargs: Any) -> hk.Module:
+    xpatch_kwargs, kwargs = group_by_prefix_and_trim("xpatch_", kwargs)
+    xpatch_ff_kwargs, xpatch_kwargs = group_by_prefix_and_trim("ff_", xpatch_kwargs)
+
+    return XBlock(
+        num_patches,
+        dim,
+        depth,
+        [
+            # Cross patch sublayer
+            lambda num_patches, dim, depth: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                feedforward=lambda num_patches, dim, depth: MLPMixerXPatchFeedForward(
+                    num_patches, **xpatch_ff_kwargs, name="mlpmixer_xpatch_ff"
+                ),
+                prenorm=lambda *_: hk.LayerNorm(-1, create_scale=True, create_offset=True, name="mlpmixer_xpatch_ln"),
+                name=f"mlpmixer_xpatch_{depth}",
+            ),
+            # Cross channel sublayer
+            lambda num_patches, dim, depth: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                feedforward=lambda num_patches, dim, depth: XChannelFeedForward(dim, name="xchannel_ff"),
+                prenorm=lambda *_: hk.LayerNorm(-1, create_scale=True, create_offset=True, name="xchannel_ln"),
+                name=f"xchannel_{depth}",
+            ),
+        ],
+        name=f"mlpmixer_block_{depth}",
+    )
+
+
+def resmlp_block_factory(num_patches: int, dim: int, depth: int, **kwargs: Any) -> hk.Module:
+    return XBlock(
+        num_patches,
+        dim,
+        depth,
+        [
+            lambda num_patches, dim, depth: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                feedforward=lambda num_patches, dim, depth: ResMLPXPatchFeedForward(
+                    num_patches, name="resmlp_xpatch_ff"
+                ),
+                prenorm=lambda num_patches, dim, depth: Affine(dim, name="resmlp_xpatch_affine"),
+                postnorm=lambda num_patches, dim, depth: LayerScale(dim, depth, name="resmlp_xpatch_scale"),
+                name=f"resmlp_xpatch_{depth}",
+            ),
+            lambda num_patches, dim, depth: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                feedforward=lambda num_patches, dim, depth: XChannelFeedForward(dim, name="xchannel_ff"),
+                prenorm=lambda num_patches, dim, depth: Affine(dim, name="xchannel_affine"),
+                postnorm=lambda num_patches, dim, depth: LayerScale(dim, depth, name="xchannel_scale"),
+                name=f"xchannel_{depth}",
+            ),
+        ],
+        name=f"resmlp_block_{depth}",
+    )
+
+
 __all__ = [
     "Affine",
     "LayerScale",
-    "MLPMixerFeedForward",
-    "ResMLPFeedForward",
-    "XChannelSublayer",
+    "MLPMixerXPatchFeedForward",
+    "ResMLPXPatchFeedForward",
+    "XBlock",
+    "XChannelFeedForward",
     "XMLP",
-    "XPatchSublayer",
+    "XSublayer",
+    "mlpmixer_block_factory",
+    "resmlp_block_factory",
 ]
