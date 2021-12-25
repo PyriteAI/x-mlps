@@ -12,7 +12,7 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from x_mlps import XMLP, Affine
+from x_mlps import XMLP, Affine, resmlp_block_factory
 
 # Model parameters
 PATCH_SIZE = 4
@@ -22,9 +22,9 @@ DEPTH = 12
 INIT_VALUE = 0
 PEAK_VALUE = 1e-3
 WARMUP_STEPS = 2000
-CLIPPING = 0.32
+CLIPPING = 0.64
 # Training parameters
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 NUM_EPOCHS = 100
 
 
@@ -42,13 +42,9 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
-            normalization=Affine,
+            block=resmlp_block_factory,
+            normalization=lambda num_patches, dim, depth, **kwargs: Affine(dim, **kwargs),
             num_classes=num_classes,
-            patch_feedforward="resmlp",
-            patch_normalization=Affine,
-            patch_layer_scale=True,
-            channel_normalization=Affine,
-            channel_layer_scale=True,
         )(x)
 
     return model_fn
@@ -160,7 +156,7 @@ def main():
     # Train!
     loss_fn = create_loss_fn()
     params, opt_state = fit(
-        model_fn.apply, loss_fn, optimizer, params, opt_state, train_loader, val_loader, num_epochs=NUM_EPOCHS
+        jax.jit(model_fn.apply), loss_fn, optimizer, params, opt_state, train_loader, val_loader, num_epochs=NUM_EPOCHS
     )
 
 

@@ -11,7 +11,7 @@ setup(
     author="Miller Wilt",
     author_email="miller@pyriteai.com",
     use_scm_version=True,
-    description="Configurable MLPs built on JAX",
+    description="Configurable MLPs built on JAX and Haiku",
     long_description=README,
     long_description_content_type="text/markdown",
     packages=find_packages("src"),

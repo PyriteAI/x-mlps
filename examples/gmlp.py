@@ -12,13 +12,13 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from x_mlps import XMLP, layernorm_factory, mlpmixer_block_factory
+from x_mlps import XMLP, LayerScale, gmlp_block_factory, layernorm_factory
 
 # Model parameters
 PATCH_SIZE = 4
-DIM = 512
-DEPTH = 8
-PATCH_FF_DIM_HIDDEN = 256
+DIM = 128
+DEPTH = 30
+FF_DIM_HIDDEN = DIM * 6
 # Optimizer parameters
 INIT_VALUE = 0
 PEAK_VALUE = 1e-3
@@ -43,10 +43,11 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
-            block=mlpmixer_block_factory,
+            block=gmlp_block_factory,
             normalization=layernorm_factory,
             num_classes=num_classes,
-            block_sublayer1_ff_dim_hidden=PATCH_FF_DIM_HIDDEN,
+            block_sublayers_ff_dim_hidden=FF_DIM_HIDDEN,
+            block_sublayers_postnorm=lambda num_patches, dim, depth, **kwargs: LayerScale(dim, depth),
         )(x)
 
     return model_fn
