@@ -3,7 +3,7 @@ from typing import Any, Callable, Optional, Protocol, Sequence
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from einops import reduce
+from einops import rearrange, reduce
 
 from ._utils import group_by_prefix_and_trim, pick_and_pop
 
@@ -21,6 +21,20 @@ def _calc_layer_scale_eps(depth: int) -> float:
     else:
         init_eps = 1e-6
     return init_eps
+
+
+def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable:
+    def shift2d(x: jnp.ndarray) -> jnp.ndarray:
+        c = x.shape[-1]
+        x = rearrange(x, "... (h w) c -> ... h w c", h=height, w=width)
+        x = x.at[amount:, :, : c // 4].set(x[:-amount, :, : c // 4])
+        x = x.at[:-amount, :, c // 4 : c // 2].set(x[amount:, :, c // 4 : c // 2])
+        x = x.at[:, amount:, c // 2 : 3 * c // 4].set(x[:, :-amount, c // 2 : 3 * c // 4])
+        x = x.at[:, :-amount, 3 * c // 4 : c].set(x[:, amount:, 3 * c // 4 : c])
+        x = rearrange(x, "... h w c -> ... (h w) c")
+        return x
+
+    return shift2d
 
 
 class Affine(hk.Module):
@@ -172,6 +186,7 @@ class XChannelFeedForward(hk.Module):
         depth: int,
         dim_hidden: Optional[int] = None,
         activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.gelu,
+        shift: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
         name: Optional[str] = None,
         **kwargs: Any,
     ):
@@ -182,10 +197,13 @@ class XChannelFeedForward(hk.Module):
         self.depth = depth
         self.dim_hidden = dim * 4 if dim_hidden is None else dim_hidden
         self.activation = activation
+        self.shift = shift
 
     def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
         x = hk.Linear(self.dim_hidden, name="linear_1")(inputs)
         x = self.activation(x)
+        if self.shift is not None:
+            x = self.shift(x)
         x = hk.Linear(self.dim, name="linear_2")(x)
         return x
 
@@ -416,6 +434,31 @@ def resmlp_block_factory(
     )
 
 
+def s2mlp_block_factory(num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any) -> hk.Module:
+    if "sublayer1_ff_shift" not in kwargs:
+        raise ValueError("s2mlp_block_factory requires sublayer1_ff_shift to be specified")
+    if "sublayer1_ff_dim_hidden" not in kwargs and "sublayers_ff_dim_hidden" not in kwargs:
+        kwargs["sublayer1_ff_dim_hidden"] = dim
+
+    return XBlock(
+        num_patches,
+        dim,
+        depth,
+        [
+            # Cross patch sublayer
+            lambda num_patches, dim, depth, **kwargs: XSublayer(
+                num_patches, dim, depth, ff=xchannel_feedforward_factory, prenorm=layernorm_factory, **kwargs
+            ),
+            # Cross channel sublayer
+            lambda num_patches, dim, depth, **kwargs: XSublayer(
+                num_patches, dim, depth, ff=xchannel_feedforward_factory, prenorm=layernorm_factory, **kwargs
+            ),
+        ],
+        name=name,
+        **kwargs,
+    )
+
+
 __all__ = [
     "Affine",
     "LayerScale",
@@ -426,6 +469,7 @@ __all__ = [
     "XChannelFeedForward",
     "XMLP",
     "XSublayer",
+    "create_shift2d_op",
     "gMLPFeedForward",
     "gmlp_block_factory",
     "gmlp_feedforward_factory",
@@ -434,6 +478,7 @@ __all__ = [
     "mlpmixer_xpatch_feedforward_factory",
     "resmlp_block_factory",
     "resmlp_xpatch_feedforward_factory",
+    "s2mlp_block_factory",
     "sgu_factory",
     "xchannel_feedforward_factory",
 ]
