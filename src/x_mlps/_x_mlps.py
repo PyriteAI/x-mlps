@@ -41,12 +41,13 @@ def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp
     """
 
     def shift2d(x: jnp.ndarray) -> jnp.ndarray:
-        c = x.shape[-1]
         x = rearrange(x, "... (h w) c -> ... h w c", h=height, w=width)
-        x = x.at[amount:, :, : c // 4].set(x[:-amount, :, : c // 4])
-        x = x.at[:-amount, :, c // 4 : c // 2].set(x[amount:, :, c // 4 : c // 2])
-        x = x.at[:, amount:, c // 2 : 3 * c // 4].set(x[:, :-amount, c // 2 : 3 * c // 4])
-        x = x.at[:, :-amount, 3 * c // 4 : c].set(x[:, amount:, 3 * c // 4 : c])
+        x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
+        x1 = x1.at[amount:].set(x1[:-amount])
+        x2 = x2.at[:-amount].set(x2[amount:])
+        x3 = x3.at[:, amount:].set(x3[:, :-amount])
+        x4 = x4.at[:, :-amount].set(x4[:, amount:])
+        x = jnp.concatenate([x1, x2, x3, x4], axis=-1)
         x = rearrange(x, "... h w c -> ... (h w) c")
         return x
 
