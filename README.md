@@ -25,9 +25,7 @@ from einops import rearrange
 from x_mlps import XMLP, Affine, resmlp_block_factory
 
 def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
-    # NOTE: Operating directly on batched data is supported as well.
-    @hk.vmap
-    def model_fn(x: jnp.ndarray) -> jnp.ndarray:
+    def model_fn(x: jnp.ndarray, is_training: bool) -> jnp.ndarray:
         # Reformat input image into a sequence of patches
         x = rearrange(x, "(h p1) (w p2) c -> (h w) (p1 p2 c)", p1=patch_size, p2=patch_size)
         return XMLP(
@@ -37,16 +35,16 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             block=resmlp_block_factory,
             normalization=lambda num_patches, dim, depth, **kwargs: Affine(dim, **kwargs),
             num_classes=num_classes,
-        )(x)
+        )(x, is_training=is_training)
 
-    return model_fn
+    # NOTE: Operating directly on batched data is supported as well.
+    return hk.vmap(model_fn, in_axes=(0, None))
 
 model = create_model(patch_size=4, dim=384, depth=12)
 model_fn = hk.transform(model)
-model_fn = hk.without_apply_rng(model_fn)
 
 rng = jax.random.PRNGKey(0)
-params = model_fn.init(rng, jnp.ones((1, 32, 32, 3)))
+params = model_fn.init(rng, jnp.ones((1, 32, 32, 3)), False)
 ```
 
 It's important to note the `XMLP` module _does not_ reformat input data to the form appropriate for whatever block you make use of (e.g., a sequence of patches).
@@ -153,5 +151,14 @@ See [LICENSE](LICENSE).
   journal={ArXiv},
   year={2021},
   volume={abs/2103.17239}
+}
+```
+
+```bibtex
+@inproceedings{Huang2016DeepNW,
+  title={Deep Networks with Stochastic Depth},
+  author={Gao Huang and Yu Sun and Zhuang Liu and Daniel Sedra and Kilian Q. Weinberger},
+  booktitle={ECCV},
+  year={2016}
 }
 ```
