@@ -59,7 +59,7 @@ The [einops](https://github.com/arogozhnikov/einops) library (which is installed
 
 X-MLPs uses a layered approach to construct arbitrary MLP networks. There are three core modules used to create a network's structure:
 
-1. `XSublayer` - bottom level module which wraps arbitrary feedforward functionality
+1. `XSublayer` - bottom level module which wraps arbitrary feedforward functionality.
 2. `XBlock` - mid level module consisting of one or more `XSublayer` modules.
 3. `XMLP` - top level module which represents a generic MLP network, and is composed of a stack of repeated `XBlock` modules.
 
@@ -72,7 +72,7 @@ Built-in prefixes include:
 3. "sublayers{i}\_" - arguments fed to the i-th `XSublayer` in each `XBlock` (where 1 <= i <= # of sublayers).
 4. "ff\_" - arguments fed to the feedforward module in a `XSublayer`.
 
-This must be combined in order when passing them to the `XMLP` module (e.g., "block*sublayer1_ff*<argument name>").
+This must be combined in order when passing them to the `XMLP` module (e.g., "block_sublayer1_ff\_<argument name>").
 
 ### XSublayer
 
@@ -82,7 +82,7 @@ This ensures that individual sublayers can be configured automatically based on 
 
 ### XBlock
 
-The `XBlock` module is a generic MLP block. It is composed of one or more `XSublayer` modules (passed as factory functions).
+The `XBlock` module is a generic MLP block. It is composed of one or more `XSublayer` modules, passed as factory functions.
 
 ### Top Layer - XMLP
 
