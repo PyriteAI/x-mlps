@@ -170,6 +170,9 @@ class SpatialGatingUnit(hk.Module):
     ):
         super().__init__(name=name)
 
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
         if norm is None:
             norm = layernorm_factory
         if activation is None:
@@ -228,6 +231,9 @@ class MLPMixerXPatchFeedForward(hk.Module):
     ):
         super().__init__(name=name)
 
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
@@ -261,6 +267,9 @@ class ResMLPXPatchFeedForward(hk.Module):
 
     def __init__(self, num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any):
         super().__init__(name=name)
+
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -306,6 +315,8 @@ class gMLPFeedForward(hk.Module):
         super().__init__(name=name)
 
         sgu_kwargs, kwargs = group_by_prefix_and_trim("sgu_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         if sgu is None:
             sgu = sgu_factory
@@ -357,6 +368,9 @@ class XChannelFeedForward(hk.Module):
         **kwargs: Any,
     ):
         super().__init__(name=name)
+
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -411,6 +425,8 @@ class XSublayer(hk.Module):
         ff_kwargs, kwargs = group_by_prefix_and_trim("ff_", kwargs)
         prenorm_kwargs, kwargs = group_by_prefix_and_trim("prenorm_", kwargs)
         postnorm_kwargs, kwargs = group_by_prefix_and_trim("postnorm_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -488,6 +504,8 @@ class XBlock(hk.Module):
         for i in range(len(sublayers)):
             sublayer_kwargs, kwargs = group_by_prefix_and_trim(f"sublayer{i + 1}_", kwargs)
             sublayers_kwargs.append(sublayer_kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -513,7 +531,11 @@ class XBlock(hk.Module):
             sublayer_kwargs = self.sublayer_common_kwargs.copy()
             sublayer_kwargs.update(self.sublayers_kwargs[i])
             x = sublayer(
-                self.num_patches, self.dim, self.depth, drop_path_rate=self.drop_path_survival_rate, **sublayer_kwargs
+                self.num_patches,
+                self.dim,
+                self.depth,
+                drop_path_survival_rate=self.drop_path_survival_rate,
+                **sublayer_kwargs,
             )(x, is_training=is_training)
         if self.residual:
             x = SampleDropout(1 - self.drop_path_survival_rate)(x, is_training=is_training) + inputs
@@ -574,6 +596,8 @@ class XMLP(hk.Module):
         super().__init__(name=name)
 
         block_kwargs, kwargs = group_by_prefix_and_trim("block_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         if isinstance(stochastic_depth, bool) and stochastic_depth:
             # This ensures that the first block can be dropped as well.
