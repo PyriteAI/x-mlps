@@ -1,7 +1,7 @@
 # X-MLPs
 
 An MLP model that provides a flexible foundation to implement, mix-and-match, and test various state-of-the-art MLP building blocks and architectures.
-Built on Jax and Haiku.
+Built on JAX and Haiku.
 
 ## Installation
 
@@ -9,7 +9,7 @@ Built on Jax and Haiku.
 pip install x-mlps
 ```
 
-**Note**: X-MLPs will not install Jax for you (see [here](https://github.com/google/jax#installation) for install instructions).
+**Note**: X-MLPs will not install JAX for you (see [here](https://github.com/google/jax#installation) for install instructions).
 
 ## Getting Started
 
@@ -33,6 +33,7 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             dim=dim,
             depth=depth,
             block=resmlp_block_factory,
+            # Normalization following the stack of ResMLP blocks
             normalization=lambda num_patches, dim, depth, **kwargs: Affine(dim, **kwargs),
             num_classes=num_classes,
         )(x, is_training=is_training)
@@ -47,11 +48,11 @@ rng = jax.random.PRNGKey(0)
 params = model_fn.init(rng, jnp.ones((1, 32, 32, 3)), False)
 ```
 
-It's important to note the `XMLP` module _does not_ reformat input data to the form appropriate for whatever block you make use of (e.g., a sequence of patches).
+It's important to note the `XMLP` module _does not_ reformat input data for you (e.g., to a sequence of patches).
 As such, you must reformat data manually before feeding it to an `XMLP` module.
-The [einops](https://github.com/arogozhnikov/einops) library (which is installed by X-MLPs) provides functions (e.g., `rearrange`) that can help here.
+The [einops](https://github.com/arogozhnikov/einops) library, which is installed by X-MLPs, provides functions that can help here (e.g., `rearrange`).
 
-**Note**: Like the core Haiku modules, all modules implemented in X-MLPs support both batched and vectorized data.
+**Note**: Like the core Haiku modules, all modules implemented in X-MLPs support batched data and being vectorized via `vmap`.
 
 ## X-MLPs Architecture Details
 
@@ -70,7 +71,7 @@ Built-in prefixes include:
 3. "sublayers{i}\_" - arguments fed to the i-th `XSublayer` in each `XBlock` (where 1 <= i <= # of sublayers).
 4. "ff\_" - arguments fed to the feedforward module in a `XSublayer`.
 
-This must be combined in order when passing them to the `XMLP` module (e.g., "block_sublayer1_ff\_<argument name>").
+Prefixes must be combined in order when passing them to the `XMLP` module (e.g., "block_sublayer1_ff\_<argument name>").
 
 ### XSublayer
 
@@ -82,7 +83,7 @@ This ensures that individual sublayers can be configured automatically based on 
 
 The `XBlock` module is a generic MLP block. It is composed of one or more `XSublayer` modules, passed as factory functions.
 
-### Top Layer - XMLP
+### XMLP
 
 At the top level is the `XMLP` module, which represents a generic MLP network.
 N `XBlock` modules are stacked together to form a network, created via a common factory function.
