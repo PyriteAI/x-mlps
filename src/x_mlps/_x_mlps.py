@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Protocol, Sequence
+from typing import Any, Callable, Optional, Protocol, Sequence, Union
 
 import haiku as hk
 import jax
@@ -41,16 +41,43 @@ def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp
     """
 
     def shift2d(x: jnp.ndarray) -> jnp.ndarray:
-        c = x.shape[-1]
         x = rearrange(x, "... (h w) c -> ... h w c", h=height, w=width)
-        x = x.at[amount:, :, : c // 4].set(x[:-amount, :, : c // 4])
-        x = x.at[:-amount, :, c // 4 : c // 2].set(x[amount:, :, c // 4 : c // 2])
-        x = x.at[:, amount:, c // 2 : 3 * c // 4].set(x[:, :-amount, c // 2 : 3 * c // 4])
-        x = x.at[:, :-amount, 3 * c // 4 : c].set(x[:, amount:, 3 * c // 4 : c])
+        x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
+        x1 = x1.at[amount:].set(x1[:-amount])
+        x2 = x2.at[:-amount].set(x2[amount:])
+        x3 = x3.at[:, amount:].set(x3[:, :-amount])
+        x4 = x4.at[:, :-amount].set(x4[:, amount:])
+        x = jnp.concatenate([x1, x2, x3, x4], axis=-1)
         x = rearrange(x, "... h w c -> ... (h w) c")
         return x
 
     return shift2d
+
+
+class SampleDropout(hk.Module):
+    """Randomly drop the input with a given probability.
+
+    This is equivalent to Stochastic Depth when applied to the output of a network path¹.
+
+    Args:
+        rate (float): Probability of dropping an element.
+        name (str, optional): Name of the module.
+
+    References:
+        1. Deep Networks with Stochastic Depth (https://arxiv.org/abs/1603.09382).
+    """
+
+    def __init__(self, rate: float, name: Optional[str] = None):
+        super().__init__(name=name)
+
+        self.rate = rate
+
+    def __call__(self, x: jnp.ndarray, *, is_training: bool) -> jnp.ndarray:
+        if is_training:
+            return hk.cond(
+                jax.random.bernoulli(hk.next_rng_key(), 1 - self.rate), lambda x: x, lambda x: jnp.zeros_like(x), x
+            )
+        return x
 
 
 class Affine(hk.Module):
@@ -143,6 +170,9 @@ class SpatialGatingUnit(hk.Module):
     ):
         super().__init__(name=name)
 
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
         if norm is None:
             norm = layernorm_factory
         if activation is None:
@@ -201,6 +231,9 @@ class MLPMixerXPatchFeedForward(hk.Module):
     ):
         super().__init__(name=name)
 
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
@@ -234,6 +267,9 @@ class ResMLPXPatchFeedForward(hk.Module):
 
     def __init__(self, num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any):
         super().__init__(name=name)
+
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -279,6 +315,8 @@ class gMLPFeedForward(hk.Module):
         super().__init__(name=name)
 
         sgu_kwargs, kwargs = group_by_prefix_and_trim("sgu_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         if sgu is None:
             sgu = sgu_factory
@@ -331,6 +369,9 @@ class XChannelFeedForward(hk.Module):
     ):
         super().__init__(name=name)
 
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
@@ -358,6 +399,8 @@ class XSublayer(hk.Module):
         prenorm (XModuleFactory, optional): Pre-normalization layer factory function. Defaults to `None`.
         postnorm (XModuleFactory, optional): Post-normalization layer factory function. Defaults to `None`.
         residual (bool): Whether to add a residual/skip connection. Defaults to `True`.
+        drop_path_survival_rate (float): Probability of the core computation being active (not dropped). Only applicable
+            if `residual` is `True`. Defaults to 1.0.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "ff_" are passed to the feedforward layer factory function.
             All arguments starting with "prenorm_" are passed to the pre-normalization layer factory function.
@@ -373,6 +416,7 @@ class XSublayer(hk.Module):
         prenorm: Optional[XModuleFactory] = None,
         postnorm: Optional[XModuleFactory] = None,
         residual: bool = True,
+        drop_path_survival_rate: float = 1.0,
         name: Optional[str] = None,
         **kwargs: Any,
     ):
@@ -381,6 +425,8 @@ class XSublayer(hk.Module):
         ff_kwargs, kwargs = group_by_prefix_and_trim("ff_", kwargs)
         prenorm_kwargs, kwargs = group_by_prefix_and_trim("prenorm_", kwargs)
         postnorm_kwargs, kwargs = group_by_prefix_and_trim("postnorm_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
@@ -389,11 +435,21 @@ class XSublayer(hk.Module):
         self.prenorm = prenorm
         self.postnorm = postnorm
         self.residual = residual
+        self.drop_path_survival_rate = drop_path_survival_rate
         self.ff_kwargs = ff_kwargs
         self.prenorm_kwargs = prenorm_kwargs
         self.postnorm_kwargs = postnorm_kwargs
 
-    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, inputs: jnp.ndarray, *, is_training: bool) -> jnp.ndarray:
+        """Propogate inputs through the sublayer.
+
+        Args:
+            inputs (jnp.ndarray): Inputs to the sublayer.
+            is_training (bool): If `True`, enable training specific features (e.g., dropout). Keyword argument.
+
+        Returns:
+            jnp.ndarray: Outputs of the sublayer.
+        """
         x = inputs
         if self.prenorm is not None:
             x = self.prenorm(self.num_patches, self.dim, self.depth, **self.prenorm_kwargs)(x)
@@ -401,7 +457,7 @@ class XSublayer(hk.Module):
         if self.postnorm is not None:
             x = self.postnorm(self.num_patches, self.dim, self.depth, **self.postnorm_kwargs)(x)
         if self.residual:
-            x += inputs
+            x = SampleDropout(1 - self.drop_path_survival_rate)(x, is_training=is_training) + inputs
 
         return x
 
@@ -423,6 +479,8 @@ class XBlock(hk.Module):
         sublayers (Sequence[XSublayerFactory]): Sublayer factory functions. Created sublayers will be stacked in the
             order of their respective factory function in the sequence.
         residual (bool): Whether to add a residual/skip connection. Defaults to `False`.
+        drop_path_survival_rate (float): Probability of the core computation being active (not dropped). Passed directly
+            to sublayers. This will also be applied at the block level if residual is `True`. Defaults to 1.0.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "sublayers_" are passed to all sublayers. All arguments starting with
             "sublayer{i}_" are passed to the i-th sublayer.
@@ -435,6 +493,7 @@ class XBlock(hk.Module):
         depth: int,
         sublayers: Sequence[XModuleFactory],
         residual: bool = False,
+        drop_path_survival_rate: float = 1.0,
         name: Optional[str] = None,
         **kwargs: Any,
     ):
@@ -445,23 +504,41 @@ class XBlock(hk.Module):
         for i in range(len(sublayers)):
             sublayer_kwargs, kwargs = group_by_prefix_and_trim(f"sublayer{i + 1}_", kwargs)
             sublayers_kwargs.append(sublayer_kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
 
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
         self.sublayers = tuple(sublayers)
         self.residual = residual
+        self.drop_path_survival_rate = drop_path_survival_rate
         self.sublayer_common_kwargs = sublayer_common_kwargs
         self.sublayers_kwargs = sublayers_kwargs
 
-    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, inputs: jnp.ndarray, *, is_training: bool) -> jnp.ndarray:
+        """Propogate inputs through the block.
+
+        Args:
+            inputs (jnp.ndarray): Inputs to the block.
+            is_training (bool): If `True`, enable training specific features (e.g., dropout). Keyword argument.
+
+        Returns:
+            jnp.ndarray: Outputs of the block.
+        """
         x = inputs
         for i, sublayer in enumerate(self.sublayers):
             sublayer_kwargs = self.sublayer_common_kwargs.copy()
             sublayer_kwargs.update(self.sublayers_kwargs[i])
-            x = sublayer(self.num_patches, self.dim, self.depth, **sublayer_kwargs)(x)
+            x = sublayer(
+                self.num_patches,
+                self.dim,
+                self.depth,
+                drop_path_survival_rate=self.drop_path_survival_rate,
+                **sublayer_kwargs,
+            )(x, is_training=is_training)
         if self.residual:
-            x += inputs
+            x = SampleDropout(1 - self.drop_path_survival_rate)(x, is_training=is_training) + inputs
         return x
 
 
@@ -471,6 +548,10 @@ class XMLP(hk.Module):
     N `XBlock` modules are stacked together to form a network (where N is set to `depth`). Importantly, this network
     assumes the input has been formatted appropriately (e.g., a sequence of patches). Before data is processed by the
     stack of `XBlock` modules, it is first projected to the specified dimension `dim` via a linear layer.
+
+    This network can optionally be configured with Stochastic Depth¹, a form of regularization. If enabled, the depth
+    of the network will be dynamically adjusted during training, with sections of the network being randomly dropped.
+    The likelihood of dropping a layer can either fixed, or dependent on the depth of the network.
 
     Optionally, the network can be configured to have a classification layer at the end by setting `num_classes` to a
     non-zero value. In this case, the resulting sequence from stack of `XBlock` modules will be averaged over the
@@ -489,9 +570,15 @@ class XMLP(hk.Module):
         block (XBlockFactory): Block factory function.
         normalization (XModuleFactory, optional): Normalization module factory function. Occurs after the stack of
             `XBlock` modules. Useful for pre-normalization architectures. Defaults to None.
+        stochastic_depth (Union[bool, float], optional): Whether to use stochastic depth. If `True`, the surivival rate
+            of each block follows the linear decay function 1 - 0.5 * (i / depth) for 1 <= i <= depth. If `False`, the
+            survival rate is 1.0. If a float, the survival rate is set to this value. Defaults to False.
         num_classes (int, optional): Number of classes in the classification layer. Defaults to None.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "block_" are passed to all blocks.
+
+    References:
+        1. Deep Networks with Stochastic Depth (https://arxiv.org/abs/1603.09382).
     """
 
     def __init__(
@@ -501,6 +588,7 @@ class XMLP(hk.Module):
         depth: int,
         block: XModuleFactory,
         normalization: Optional[XModuleFactory] = None,
+        stochastic_depth: Union[float, bool] = False,
         num_classes: Optional[int] = None,
         name: Optional[str] = None,
         **kwargs: Any,
@@ -508,19 +596,45 @@ class XMLP(hk.Module):
         super().__init__(name=name)
 
         block_kwargs, kwargs = group_by_prefix_and_trim("block_", kwargs)
+        if kwargs:
+            raise KeyError(f"unknown keyword arguments: {list(kwargs.keys())}")
+
+        if isinstance(stochastic_depth, bool) and stochastic_depth:
+            # This ensures that the first block can be dropped as well.
+            drop_path_survival_rates = jnp.linspace(1.0, 0.5, num=depth + 1)[1:]
+        elif isinstance(stochastic_depth, float):
+            drop_path_survival_rates = jnp.full(depth, stochastic_depth)
+        else:
+            drop_path_survival_rates = jnp.ones(depth)
 
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
         self.block = block
         self.normalization = normalization
+        self.drop_path_survival_rates = drop_path_survival_rates
         self.num_classes = num_classes
         self.block_kwargs = block_kwargs
 
-    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, inputs: jnp.ndarray, *, is_training: bool) -> jnp.ndarray:
+        """Propogate inputs through the network.
+
+        Args:
+            inputs (jnp.ndarray): Inputs to the network.
+            is_training (bool): If `True`, enable training specific features (e.g., dropout). Keyword argument.
+
+        Returns:
+            jnp.ndarray: Outputs of the network.
+        """
         x = hk.Linear(self.dim, name="proj_in")(inputs)
         for i in range(self.depth):
-            x = self.block(self.num_patches, self.dim, i + 1, **self.block_kwargs)(x)
+            x = self.block(
+                self.num_patches,
+                self.dim,
+                i + 1,
+                drop_path_survival_rate=self.drop_path_survival_rates[i],
+                **self.block_kwargs,
+            )(x, is_training=is_training)
         if self.normalization is not None:
             x = self.normalization(self.num_patches, self.dim, self.depth + 1)(x)
         if self.num_classes is not None:
@@ -853,6 +967,7 @@ __all__ = [
     "LayerScale",
     "MLPMixerXPatchFeedForward",
     "ResMLPXPatchFeedForward",
+    "SampleDropout",
     "SpatialGatingUnit",
     "XBlock",
     "XChannelFeedForward",

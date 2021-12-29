@@ -35,8 +35,7 @@ def collate_fn(batch):
 
 
 def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
-    @hk.vmap
-    def model_fn(x: jnp.ndarray) -> jnp.ndarray:
+    def model_fn(x: jnp.ndarray, is_training: bool) -> jnp.ndarray:
         x = rearrange(x, "(h p1) (w p2) c -> (h w) (p1 p2 c)", p1=patch_size, p2=patch_size)
         return XMLP(
             num_patches=x.shape[-2],
@@ -45,9 +44,9 @@ def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
             block=resmlp_block_factory,
             normalization=lambda num_patches, dim, depth, **kwargs: Affine(dim, **kwargs),
             num_classes=num_classes,
-        )(x)
+        )(x, is_training=is_training)
 
-    return model_fn
+    return hk.vmap(model_fn, in_axes=(0, None))
 
 
 def create_loss_fn(num_classes: int = 10, alpha: float = 0.1, reduction: str = "mean"):
@@ -64,8 +63,8 @@ def create_loss_fn(num_classes: int = 10, alpha: float = 0.1, reduction: str = "
 
 def create_step_fn(loss_fn, optimizer: optax.GradientTransformation):
     @jax.jit
-    def step_fn(params: hk.Params, opt_state: optax.OptState, x: jnp.ndarray, y: jnp.ndarray):
-        loss_value, grads = jax.value_and_grad(loss_fn)(params, x, y)
+    def step_fn(params: hk.Params, rng: jax.random.KeyArray, opt_state: optax.OptState, x: jnp.ndarray, y: jnp.ndarray):
+        loss_value, grads = jax.value_and_grad(loss_fn)(params, rng, x, y)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
@@ -82,11 +81,16 @@ def fit(
     opt_state: optax.OptState,
     train_loader: DataLoader,
     val_loader: DataLoader,
+    rng: jax.random.KeyArray,
     num_epochs: int = 1,
 ):
-    def forward(params: hk.Params, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-        y_hat = model_fn(params, x)
+    def forward(params: hk.Params, rng: jax.random.KeyArray, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+        y_hat = model_fn(params, rng, x, True)
         return loss_fn(y_hat, y)
+
+    @jax.jit
+    def predict(params: hk.Params, x: jnp.ndarray) -> jnp.ndarray:
+        return model_fn(params, None, x, False)
 
     step = create_step_fn(forward, optimizer)
 
@@ -94,14 +98,15 @@ def fit(
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs}", unit="batch") as t:
             for x, y in train_loader:
                 x, y = jnp.array(x), jnp.array(y)
-                params, opt_state, loss_value = step(params, opt_state, x, y)
+                rng, subkey = jax.random.split(rng)
+                params, opt_state, loss_value = step(params, subkey, opt_state, x, y)
                 t.set_postfix(loss=loss_value)
                 t.update()
             num_correct, num_samples = 0, 0
             losses = []
             for x, y in val_loader:
                 x, y = jnp.array(x), jnp.array(y)
-                y_hat = model_fn(params, x)
+                y_hat = predict(params, x)
                 loss_value = loss_fn(y_hat, y)
 
                 losses.append(loss_value.item())
@@ -135,12 +140,9 @@ def main():
     # Create and initalize model
     model = create_model(patch_size=PATCH_SIZE, dim=DIM, depth=DEPTH)
     model_fn = hk.transform(model)
-    model_fn = hk.without_apply_rng(model_fn)
 
-    rng = jax.random.PRNGKey(0)
-    params = model_fn.init(rng, jnp.ones((1, 32, 32, 3)))
-
-    print(hk.experimental.tabulate(model_fn.apply)(jnp.ones((1, 32, 32, 3))))
+    key, subkey = jax.random.split(jax.random.PRNGKey(0))
+    params = model_fn.init(subkey, jnp.ones((1, 32, 32, 3)), False)
 
     # Create and initialize optimizer
     schedule = optax.warmup_cosine_decay_schedule(
@@ -156,7 +158,15 @@ def main():
     # Train!
     loss_fn = create_loss_fn()
     params, opt_state = fit(
-        jax.jit(model_fn.apply), loss_fn, optimizer, params, opt_state, train_loader, val_loader, num_epochs=NUM_EPOCHS
+        model_fn.apply,
+        loss_fn,
+        optimizer,
+        params,
+        opt_state,
+        train_loader,
+        val_loader,
+        rng=key,
+        num_epochs=NUM_EPOCHS,
     )
 
 
