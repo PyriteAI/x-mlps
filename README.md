@@ -163,3 +163,13 @@ See [LICENSE](LICENSE).
   year={2016}
 }
 ```
+
+```bibtex
+@article{LeeThorp2021FNetMT,
+  title={FNet: Mixing Tokens with Fourier Transforms},
+  author={James P Lee-Thorp and Joshua Ainslie and Ilya Eckstein and Santiago Onta{\~n}{\'o}n},
+  journal={ArXiv},
+  year={2021},
+  volume={abs/2105.03824}
+}
+```
