@@ -337,6 +337,85 @@ class gMLPFeedForward(hk.Module):
         return x
 
 
+class FFTFeedForward(hk.Module):
+    """N-D FFT mixing feedforward layer.
+
+    Mixes patches (tokens) using an N-D FFT. By default this is done in the patch/token/sequence dimension using a 1D FFT.
+    Returns only the real component of the FFT.
+
+    Note that this module does not implement normalization nor a skip connection. This module can be combined with the
+    `XSublayer` module to add these functionalities.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        axes (Sequence[int]): The axes to perform the FFT on. Defaults to (-2,).
+        norm (str, optional): The normalization to apply to the FFT. Defaults to None.
+        name (str, optional): The name of the module. Defaults to None.
+    """
+
+    def __init__(
+        self,
+        num_patches: int,
+        dim: int,
+        depth: int,
+        axes: Sequence[int] = (-2,),
+        norm: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+
+        self.num_patches = num_patches
+        self.dim = dim
+        self.depth = depth
+        self.axes = axes
+        self.norm = norm
+
+    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+        return jnp.fft.fftn(inputs, axes=self.axes, norm=self.norm).real
+
+
+class FFTLinearFeedForward(hk.Module):
+    """1-D FFT mixing combined with a linear layer.
+
+    Mixes patches (tokens) using an 1-D FFT across the patch/token/sequence dimension and then feeds the results to a
+    linear layer. Operates only on the real component of the FFT.
+
+    Note that this module does not implement normalization nor a skip connection. This module can be combined with the
+    `XSublayer` module to add these functionalities.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        axis (int): The axes to perform the FFT on. Defaults to (-2,).
+        norm (str, optional): The normalization to apply to the FFT. Defaults to None.
+        name (str, optional): The name of the module. Defaults to None.
+    """
+
+    def __init__(
+        self,
+        num_patches: int,
+        dim: int,
+        depth: int,
+        axis: int = -2,
+        norm: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+
+        self.num_patches = num_patches
+        self.dim = dim
+        self.depth = depth
+        self.axis = axis
+        self.norm = norm
+
+    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+        x = jnp.fft.fft(inputs, axis=self.axis, norm=self.norm).real
+        return hk.Linear(self.dim, name="linear")(x)
+
+
 class XChannelFeedForward(hk.Module):
     """Common channel mixing feedforward layer.
 
@@ -758,6 +837,46 @@ def resmlp_xpatch_feedforward_factory(
     return ResMLPXPatchFeedForward(num_patches, dim, depth, **kwargs, name=name)
 
 
+def fft_xpatch_feedforward_factory(
+    num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any
+) -> hk.Module:
+    """FFT cross-patch feedforward module factory function.
+
+    Satifies the `XModuleFactory` interface.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        name (str, optional): The name of the module. Defaults to None.
+        **kwargs: Additional `FFTFeedForward` arguments.
+
+    Returns:
+        hk.Module: `FFTFeedForward` module.
+    """
+    return FFTFeedForward(num_patches, dim, depth, **kwargs, name=name)
+
+
+def fftlinear_xpatch_feedforward_factory(
+    num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any
+) -> hk.Module:
+    """FFT-Linear cross-patch feedforward module factory function.
+
+    Satifies the `XModuleFactory` interface.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        name (str, optional): The name of the module. Defaults to None.
+        **kwargs: Additional `FFTLinearFeedForward` arguments.
+
+    Returns:
+        hk.Module: `FFTLinearFeedForward` module.
+    """
+    return FFTLinearFeedForward(num_patches, dim, depth, **kwargs, name=name)
+
+
 def xchannel_feedforward_factory(
     num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any
 ) -> hk.Module:
@@ -962,9 +1081,113 @@ def s2mlp_block_factory(num_patches: int, dim: int, depth: int, name: Optional[s
     )
 
 
+def fft_block_factory(num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any) -> hk.Module:
+    """FFT block module factory function.
+
+    Builds a `XBlock` module with an FNet-like block structure as defined in *FNet: Mixing Tokens with Fourier Transforms*¹.
+    Specifically, this consists of two `XSublayer`s: 1) an `FFTFeedForward` module and 2) a `XChannelFeedForward` module.
+    Both make use of layer normalization (pre-normalization).
+
+    In contrast to the FNet paper, the FFT feedforward layer can be configured to an arbitrary N-D FFT. By default it is
+    configured to be a 1D FFT across the patch (token) dimension.
+
+    Satifies the `XModuleFactory` interface.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        name (str, optional): The name of the module. Defaults to None.
+        **kwargs: Additional block and child module arguments.
+
+    Returns:
+        hk.Module: `XBlock` module.
+
+    References:
+        1. FNet: Mixing Tokens with Fourier Transforms (https://arxiv.org/abs/2105.03824).
+    """
+    return XBlock(
+        num_patches,
+        dim,
+        depth,
+        [
+            # Cross patch sublayer
+            lambda num_patches, dim, depth, name=None, **kwargs: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                ff=fft_xpatch_feedforward_factory,
+                prenorm=layernorm_factory,
+                name=name,
+                **kwargs,
+            ),
+            # Cross channel sublayer
+            lambda num_patches, dim, depth, name=None, **kwargs: XSublayer(
+                num_patches, dim, depth, ff=xchannel_feedforward_factory, prenorm=layernorm_factory, name=name, **kwargs
+            ),
+        ],
+        name=name,
+        **kwargs,
+    )
+
+
+def fftlinear_block_factory(
+    num_patches: int, dim: int, depth: int, name: Optional[str] = None, **kwargs: Any
+) -> hk.Module:
+    """FFT-Linear block module factory function.
+
+    Builds a `XBlock` module with an FNet-like block structure as defined in *FNet: Mixing Tokens with Fourier Transforms*¹.
+    Specifically, this consists of two `XSublayer`s: 1) an `FFTLinearFeedForward` module and 2) a `Linear` module. Both
+    make use of layer normalization (pre-normalization).
+
+    In contrast to the FNet paper, the feedforward layer consists of a 1-D FFT across the patch (token) dimension and a
+    linear layer (which consumes the FFT'ed data).
+
+    Satifies the `XModuleFactory` interface.
+
+    Args:
+        num_patches (int): Number of patches in the input.
+        dim (int): Size of the channel dimension.
+        depth (int): The depth of the block which contains this layer in the network. Note that depth starts from 1.
+        name (str, optional): The name of the module. Defaults to None.
+        **kwargs: Additional block and child module arguments.
+
+    Returns:
+        hk.Module: `XBlock` module.
+
+    References:
+        1. FNet: Mixing Tokens with Fourier Transforms (https://arxiv.org/abs/2105.03824).
+    """
+    return XBlock(
+        num_patches,
+        dim,
+        depth,
+        [
+            # Cross patch sublayer
+            lambda num_patches, dim, depth, name=None, **kwargs: XSublayer(
+                num_patches,
+                dim,
+                depth,
+                ff=fftlinear_xpatch_feedforward_factory,
+                prenorm=layernorm_factory,
+                name=name,
+                **kwargs,
+            ),
+            # Linear sublayer
+            lambda num_patches, dim, depth, name=None, **kwargs: XSublayer(
+                num_patches, dim, depth, ff=xchannel_feedforward_factory, prenorm=layernorm_factory, name=name, **kwargs
+            ),
+        ],
+        name=name,
+        **kwargs,
+    )
+
+
 __all__ = [
     "Affine",
     "LayerScale",
+    "FFTFeedForward",
+    "FFTLinearFeedForward",
     "MLPMixerXPatchFeedForward",
     "ResMLPXPatchFeedForward",
     "SampleDropout",
@@ -974,6 +1197,10 @@ __all__ = [
     "XMLP",
     "XSublayer",
     "create_shift2d_op",
+    "fft_block_factory",
+    "fft_xpatch_feedforward_factory",
+    "fftlinear_block_factory",
+    "fftlinear_xpatch_feedforward_factory",
     "gMLPFeedForward",
     "gmlp_block_factory",
     "gmlp_feedforward_factory",
