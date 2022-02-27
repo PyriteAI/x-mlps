@@ -7,12 +7,15 @@ flake8
 flake8-bugbear
 ipython
 isort
-git+git://github.com/deepmind/optax.git
+jmp
+optax
 pre-commit
 pytest
 safety
 setuptools-scm
+tables
 torch
 torchvision
 tqdm
 twine
+typer

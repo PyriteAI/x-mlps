@@ -11,11 +11,11 @@ absl-py==1.0.0
     #   jaxlib
 flatbuffers==2.0
     # via jaxlib
-jax[cpu]==0.2.26
+jax[cpu]==0.3.1
     # via -r jax-cpu.in
-jaxlib==0.1.75
+jaxlib==0.3.0
     # via jax
-numpy==1.21.5
+numpy==1.22.2
     # via
     #   -c requirements.txt
     #   jax
@@ -24,7 +24,7 @@ numpy==1.21.5
     #   scipy
 opt-einsum==3.3.0
     # via jax
-scipy==1.7.3
+scipy==1.8.0
     # via
     #   jax
     #   jaxlib
@@ -32,5 +32,5 @@ six==1.16.0
     # via
     #   -c requirements.txt
     #   absl-py
-typing-extensions==4.0.1
+typing-extensions==4.1.1
     # via jax
