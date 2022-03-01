@@ -95,7 +95,16 @@ The following architectures have been implemented in the form of `XBlock`s and h
 - ResMLP - `resmlp_block_factory`
 - MLP-Mixer - `mlpmixer_block_factory`
 - gMLP - `gmlp_block_factory`
-- S²-MLP `s2mlp_block_factory`
+- S²-MLP - `s2mlp_block_factory`
+- FNet - `fft_block_factory`
+
+Importantly, the components that make up these blocks are part of the public API, and thus can be easily mixed and
+matched. Additionally, several component variations have been made based on combining ideas from current research.
+This includes:
+
+- `fftlinear_block_factory` - an FNet block variation: combines a 1D FFT for patch mixing plus a linear layer.
+- `create_shift1d_op` - A 1D shift operation inspired by S²-MLP, making it appropriate for sequence data.
+- `create_multishift1d_op` - Like `create_shift1d_op`, but supports multiple shifts of varying sizes.
 
 See their respective docstrings for more information.
 
