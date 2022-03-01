@@ -6,13 +6,13 @@
 #
 absl-py==1.0.0
     # via dm-haiku
-dm-haiku==0.0.5
+dm-haiku==0.0.6
     # via -r requirements/requirements.in
-einops==0.3.2
+einops==0.4.0
     # via -r requirements/requirements.in
 jmp==0.0.2
     # via dm-haiku
-numpy==1.21.5
+numpy==1.22.2
     # via
     #   dm-haiku
     #   jmp

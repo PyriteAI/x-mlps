@@ -1,5 +1,6 @@
 -c requirements.txt
 -c jax-gpu.txt
+acni
 bandit
 build
 black
@@ -7,12 +8,14 @@ flake8
 flake8-bugbear
 ipython
 isort
-git+git://github.com/deepmind/optax.git
+optax
 pre-commit
 pytest
 safety
 setuptools-scm
+tables
 torch
 torchvision
 tqdm
 twine
+typer

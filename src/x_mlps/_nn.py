@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import haiku as hk
 import jax
@@ -17,6 +17,75 @@ def _calc_layer_scale_eps(depth: int) -> float:
     else:
         init_eps = 1e-6
     return init_eps
+
+
+def create_multishift1d_op(amount: Sequence[int], bidirectional: bool = True) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    """Create a 1D multi-shift operator, inspired by the spatial shift operator introduced in S^2-MLP¹.
+
+    This operation works by calling `create_shift1d_op` with each value in `amount` and then concatenating the results.
+    By default the shift operator is bidirectional, resulting in interleaved shifting.
+
+    Expects inputs to be of shape `(num_patches, dim)` or `(batch_size, num_patches, dim)`.
+
+    Args:
+        amount: Sequence of shift amounts.
+        bidirectional: Whether to use bidirectional shift. Defaults to True.
+
+    Returns:
+        The configured shift operator.
+
+    References:
+        1. S2-MLP: Spatial-Shift MLP Architecture for Vision (https://arxiv.org/abs/2106.07477).
+    """
+
+    def multishift1d(x: jnp.ndarray) -> jnp.ndarray:
+        xs = jnp.split(x, len(amount), axis=-1)
+        shifted_xs = [create_shift1d_op(amount[i], bidirectional=bidirectional)(x) for i, x in enumerate(xs)]
+        x = jnp.concatenate(shifted_xs, axis=-1)
+        return x
+
+    return multishift1d
+
+
+def create_shift1d_op(amount: int = 1, bidirectional: bool = True) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    """Create a 1D shift operator, inspired by the spatial shift operator introduced in S^2-MLP¹.
+
+    By default the the shift operator is bidirectional. This results in the input data being split into two parts,
+    one part is shifted forward and the other part is shifted backward by `amount`. The two parts are then
+    concatenated. It's rare that unidirectional shift is needed; however, it can be useful as a building block for more
+    complex shifting operations.
+
+    Expects inputs to be of shape `(num_patches, dim)` or `(batch_size, num_patches, dim)`.
+
+    Args:
+        amount: Amount of shift. Defaults to 1.
+        bidirectional: Whether to use bidirectional shift. Defaults to True.
+
+    Returns:
+        The configured shift operator.
+
+    References:
+        1. S2-MLP: Spatial-Shift MLP Architecture for Vision (https://arxiv.org/abs/2106.07477).
+    """
+
+    def shift1d(x: jnp.ndarray) -> jnp.ndarray:
+        if bidirectional:
+            x1, x2 = jnp.split(x, 2, axis=-1)
+            if x.ndim == 2:
+                x1 = x1.at[amount:].set(x1[:-amount])
+                x2 = x2.at[:-amount].set(x2[amount:])
+            else:
+                x1 = x1.at[:, amount:].set(x1[:, :-amount])
+                x2 = x2.at[:, :-amount].set(x2[:, amount:])
+            x = jnp.concatenate([x1, x2], axis=-1)
+        else:
+            if x.ndim == 2:
+                x = x.at[amount:].set(x[:-amount])
+            else:
+                x = x.at[:, amount:].set(x[:, :-amount])
+        return x
+
+    return shift1d
 
 
 def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp.ndarray], jnp.ndarray]:
@@ -252,6 +321,8 @@ __all__ = [
     "SampleDropout",
     "SpatialGatingUnit",
     "layernorm_factory",
+    "create_multishift1d_op",
+    "create_shift1d_op",
     "create_shift2d_op",
     "sgu_factory",
 ]
