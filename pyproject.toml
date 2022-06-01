@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "x-mlps"
-version = "0.4.0"
+version = "0.5.0"
 description = "Configurable MLPs built on JAX and Haiku"
 readme = "README.md"
 authors = ["Miller Wilt <miller@pyriteai.com>"]
