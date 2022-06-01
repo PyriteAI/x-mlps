@@ -54,7 +54,7 @@ def create_shift1d_op(amount: int = 1, bidirectional: bool = True) -> Callable[[
     concatenated. It's rare that unidirectional shift is needed; however, it can be useful as a building block for more
     complex shifting operations.
 
-    Expects inputs to be of shape `(num_patches, dim)` or `(batch_size, num_patches, dim)`.
+    Expects inputs to be of shape `(..., num_patches, dim)`.
 
     Args:
         amount: Amount of shift. Defaults to 1.
@@ -68,20 +68,15 @@ def create_shift1d_op(amount: int = 1, bidirectional: bool = True) -> Callable[[
     """
 
     def shift1d(x: jnp.ndarray) -> jnp.ndarray:
+        slice_from1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(amount, None, None),)
+        slice_end1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(None, -amount, None),)
         if bidirectional:
             x1, x2 = jnp.split(x, 2, axis=-1)
-            if x.ndim == 2:
-                x1 = x1.at[amount:].set(x1[:-amount])
-                x2 = x2.at[:-amount].set(x2[amount:])
-            else:
-                x1 = x1.at[:, amount:].set(x1[:, :-amount])
-                x2 = x2.at[:, :-amount].set(x2[:, amount:])
+            x1 = x1.at[slice_from1].set(x1[slice_end1])
+            x2 = x2.at[slice_end1].set(x2[slice_from1])
             x = jnp.concatenate([x1, x2], axis=-1)
         else:
-            if x.ndim == 2:
-                x = x.at[amount:].set(x[:-amount])
-            else:
-                x = x.at[:, amount:].set(x[:, :-amount])
+            x = x.at[slice_from1].set(x[slice_end1])
         return x
 
     return shift1d
@@ -106,10 +101,10 @@ def create_shift2d_op(amount: int = 1) -> Callable[[jnp.ndarray], jnp.ndarray]:
         x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
 
         # Handle variable tensor shapes.
-        hslice_from1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(amount, None, None),)
-        hslice_end1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(None, -amount, None),)
-        wslice_from1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(amount, None, None),)
-        wslice_end1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(None, -amount, None),)
+        hslice_from1 = (slice(None, None, None),) * (x.ndim - 3) + (slice(amount, None, None),)
+        hslice_end1 = (slice(None, None, None),) * (x.ndim - 3) + (slice(None, -amount, None),)
+        wslice_from1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(amount, None, None),)
+        wslice_end1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(None, -amount, None),)
 
         x1 = x1.at[hslice_from1].set(x1[hslice_end1])
         x2 = x2.at[hslice_end1].set(x2[hslice_from1])
