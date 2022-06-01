@@ -12,7 +12,7 @@ from ._ff import (
     resmlp_xpatch_feedforward_factory,
     xchannel_feedforward_factory,
 )
-from ._nn import Affine, LayerScale, SampleDropout, layernorm_factory
+from ._nn import Affine, DropPath, LayerScale, layernorm_factory
 from ._types import XModuleFactory
 from ._utils import group_by_prefix_and_trim
 
@@ -28,8 +28,8 @@ class XSublayer(hk.Module):
         prenorm (XModuleFactory, optional): Pre-normalization layer factory function. Defaults to `None`.
         postnorm (XModuleFactory, optional): Post-normalization layer factory function. Defaults to `None`.
         residual (bool): Whether to add a residual/skip connection. Defaults to `True`.
-        drop_path_survival_rate (float): Probability of the core computation being active (not dropped). Only applicable
-            if `residual` is `True`. Defaults to 1.0.
+        p_drop_path (float): Probability of the core computation being dropped. Only applicable if `residual` is `True`.
+            Defaults to 0.0.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "ff_" are passed to the feedforward layer factory function.
             All arguments starting with "prenorm_" are passed to the pre-normalization layer factory function.
@@ -45,7 +45,8 @@ class XSublayer(hk.Module):
         prenorm: Optional[XModuleFactory] = None,
         postnorm: Optional[XModuleFactory] = None,
         residual: bool = True,
-        drop_path_survival_rate: float = 1.0,
+        p_drop_path: float = 0.0,
+        drop_path_mode: str = "batch",
         name: Optional[str] = None,
         **kwargs: Any,
     ):
@@ -64,7 +65,8 @@ class XSublayer(hk.Module):
         self.prenorm = prenorm
         self.postnorm = postnorm
         self.residual = residual
-        self.drop_path_survival_rate = drop_path_survival_rate
+        self.p_drop_path = p_drop_path
+        self.drop_path_mode = drop_path_mode
         self.ff_kwargs = ff_kwargs
         self.prenorm_kwargs = prenorm_kwargs
         self.postnorm_kwargs = postnorm_kwargs
@@ -86,8 +88,7 @@ class XSublayer(hk.Module):
         if self.postnorm is not None:
             x = self.postnorm(self.num_patches, self.dim, self.depth, **self.postnorm_kwargs)(x)
         if self.residual:
-            x = SampleDropout(1 - self.drop_path_survival_rate)(x, is_training=is_training) + inputs
-
+            x = DropPath(self.p_drop_path, mode=self.drop_path_mode)(x, is_training=is_training) + inputs
         return x
 
 
@@ -108,8 +109,8 @@ class XBlock(hk.Module):
         sublayers (Sequence[XSublayerFactory]): Sublayer factory functions. Created sublayers will be stacked in the
             order of their respective factory function in the sequence.
         residual (bool): Whether to add a residual/skip connection. Defaults to `False`.
-        drop_path_survival_rate (float): Probability of the core computation being active (not dropped). Passed directly
-            to sublayers. This will also be applied at the block level if residual is `True`. Defaults to 1.0.
+        p_drop_path (float): Probability of the core computation being dropped. Passed directly
+            to sublayers. This will also be applied at the block level if residual is `True`. Defaults to 0.0.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "sublayers_" are passed to all sublayers. All arguments starting with
             "sublayer{i}_" are passed to the i-th sublayer.
@@ -122,7 +123,8 @@ class XBlock(hk.Module):
         depth: int,
         sublayers: Sequence[XModuleFactory],
         residual: bool = False,
-        drop_path_survival_rate: float = 1.0,
+        p_drop_path: float = 0.0,
+        drop_path_mode: str = "batch",
         name: Optional[str] = None,
         **kwargs: Any,
     ):
@@ -141,7 +143,8 @@ class XBlock(hk.Module):
         self.depth = depth
         self.sublayers = tuple(sublayers)
         self.residual = residual
-        self.drop_path_survival_rate = drop_path_survival_rate
+        self.p_drop_path = p_drop_path
+        self.drop_path_mode = drop_path_mode
         self.sublayer_common_kwargs = sublayer_common_kwargs
         self.sublayers_kwargs = sublayers_kwargs
 
@@ -163,11 +166,12 @@ class XBlock(hk.Module):
                 self.num_patches,
                 self.dim,
                 self.depth,
-                drop_path_survival_rate=self.drop_path_survival_rate,
+                p_drop_path=self.p_drop_path,
+                drop_path_mode=self.drop_path_mode,
                 **sublayer_kwargs,
             )(x, is_training=is_training)
         if self.residual:
-            x = SampleDropout(1 - self.drop_path_survival_rate)(x, is_training=is_training) + inputs
+            x = DropPath(self.p_drop_path, mode=self.drop_path_mode)(x, is_training=is_training) + inputs
         return x
 
 
@@ -230,18 +234,18 @@ class XMLP(hk.Module):
 
         if isinstance(stochastic_depth, bool) and stochastic_depth:
             # This ensures that the first block can be dropped as well.
-            drop_path_survival_rates = jnp.linspace(1.0, 0.5, num=depth + 1)[1:]
+            p_drop_path = jnp.linspace(0.0, 0.5, num=depth)
         elif isinstance(stochastic_depth, float):
-            drop_path_survival_rates = jnp.full(depth, stochastic_depth)
+            p_drop_path = jnp.full(depth, stochastic_depth)
         else:
-            drop_path_survival_rates = jnp.ones(depth)
+            p_drop_path = jnp.zeros(depth)
 
         self.num_patches = num_patches
         self.dim = dim
         self.depth = depth
         self.block = block
         self.normalization = normalization
-        self.drop_path_survival_rates = drop_path_survival_rates
+        self.p_drop_path = p_drop_path
         self.num_classes = num_classes
         self.block_kwargs = block_kwargs
 
@@ -261,7 +265,7 @@ class XMLP(hk.Module):
                 self.num_patches,
                 self.dim,
                 i + 1,
-                drop_path_survival_rate=self.drop_path_survival_rates[i],
+                p_drop_path=self.p_drop_path[i],
                 **self.block_kwargs,
             )(x, is_training=is_training)
         if self.normalization is not None:

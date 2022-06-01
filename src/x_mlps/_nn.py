@@ -117,29 +117,48 @@ def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp
     return shift2d
 
 
-class SampleDropout(hk.Module):
+class DropPath(hk.Module):
     """Randomly drop the input with a given probability.
 
-    This is equivalent to Stochastic Depth when applied to the output of a network path¹.
+    This is equivalent to Stochastic Depth when applied to the output of a network path¹. Additionally, individual
+    samples can be dropped independently when `mode` is set to `sample` (the default is to drop the entire batch),
+    mimicking the implementation from PyTorch Image Models². However, sample mode is not supported with `vmap`.
 
     Args:
-        rate (float): Probability of dropping an element.
-        name (str, optional): Name of the module.
+        rate: Probability of dropping an element.
+        mode: Whether to operate on individual samples in a batch or the whole batch. Defaults to "batch". Must be set
+            "batch" when `vmap` is used.
+        name: Name of the module.
 
     References:
         1. Deep Networks with Stochastic Depth (https://arxiv.org/abs/1603.09382).
+        2. PyTorch Image Models (https://github.com/rwightman/pytorch-image-models/blob/e4360e6125bb0bb4279785810c8eb33b40af3ebd/timm/models/layers/drop.py#L137).
     """
 
-    def __init__(self, rate: float, name: Optional[str] = None):
+    def __init__(self, rate: float, mode: str = "batch", name: Optional[str] = None):
         super().__init__(name=name)
 
+        if mode not in {"batch", "sample"}:
+            raise ValueError(f"invalid mode: {mode}")
+
         self.rate = rate
+        self.mode = mode
 
     def __call__(self, x: jnp.ndarray, *, is_training: bool) -> jnp.ndarray:
         if is_training:
-            return hk.cond(
-                jax.random.bernoulli(hk.next_rng_key(), 1 - self.rate), lambda x: x, lambda x: jnp.zeros_like(x), x
-            )
+            if self.mode == "batch":
+                x = (
+                    jax.random.bernoulli(hk.next_rng_key(), 1 - self.rate)
+                    * x
+                    / jnp.clip(1 - self.rate + 1e-12, a_min=0, a_max=1)
+                )
+            elif self.mode == "sample":
+                shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+                x = (
+                    jax.random.bernoulli(hk.next_rng_key(), 1 - self.rate, shape=shape)
+                    * x
+                    / jnp.clip(1 - self.rate + 1e-12, a_min=0, a_max=1)
+                )
         return x
 
 
@@ -318,7 +337,7 @@ def sgu_factory(num_patches: int, dim: int, depth: int, name: Optional[str] = No
 __all__ = [
     "Affine",
     "LayerScale",
-    "SampleDropout",
+    "DropPath",
     "SpatialGatingUnit",
     "layernorm_factory",
     "create_multishift1d_op",
