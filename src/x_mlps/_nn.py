@@ -101,10 +101,10 @@ def create_shift2d_op(amount: int = 1) -> Callable[[jnp.ndarray], jnp.ndarray]:
         x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
 
         # Handle variable tensor shapes.
-        hslice_from1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(amount, None, None),)
-        hslice_end1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(None, -amount, None),)
-        wslice_from1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(amount, None, None),)
-        wslice_end1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(None, -amount, None),)
+        hslice_from1 = (slice(None, None, None),) * (x.ndim - 3) + (slice(amount, None, None),)
+        hslice_end1 = (slice(None, None, None),) * (x.ndim - 3) + (slice(None, -amount, None),)
+        wslice_from1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(amount, None, None),)
+        wslice_end1 = (slice(None, None, None),) * (x.ndim - 2) + (slice(None, -amount, None),)
 
         x1 = x1.at[hslice_from1].set(x1[hslice_end1])
         x2 = x2.at[hslice_end1].set(x2[hslice_from1])
