@@ -37,17 +37,17 @@ def collate_fn(batch):
 
 def create_model(patch_size: int, dim: int, depth: int, num_classes: int = 10):
     def model_fn(x: jnp.ndarray, is_training: bool) -> jnp.ndarray:
-        h, w, _ = x.shape
-        x = rearrange(x, "(h p1) (w p2) c -> (h w) (p1 p2 c)", p1=patch_size, p2=patch_size)
-        return XMLP(
+        x = rearrange(x, "... (h p1) (w p2) c -> ... h w (p1 p2 c)", p1=patch_size, p2=patch_size)
+        x = XMLP(
             num_patches=x.shape[-2],
             dim=dim,
             depth=depth,
             block=s2mlp_block_factory,
             normalization=layernorm_factory,
-            num_classes=num_classes,
-            block_sublayer1_ff_shift=create_shift2d_op(h // patch_size, w // patch_size),
+            block_sublayer1_ff_shift=create_shift2d_op(),
         )(x, is_training=is_training)
+        x = x = reduce(x, "... h w c -> ... c", "mean")
+        return hk.Linear(num_classes, name="proj_out")(x)
 
     return hk.vmap(model_fn, in_axes=(0, None))
 

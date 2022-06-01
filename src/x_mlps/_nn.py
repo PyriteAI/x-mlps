@@ -3,7 +3,6 @@ from typing import Any, Callable, Optional, Sequence
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from einops import rearrange
 
 from ._types import XModuleFactory
 from ._utils import pick_and_pop
@@ -88,12 +87,12 @@ def create_shift1d_op(amount: int = 1, bidirectional: bool = True) -> Callable[[
     return shift1d
 
 
-def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp.ndarray], jnp.ndarray]:
+def create_shift2d_op(amount: int = 1) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Create a 2D shift operator based on spatial shift algorithm introduced in S^2-MLP¹.
 
+    Expects inputs to be of shape `(..., height, width, dim)`.
+
     Args:
-        height: Height of the original input image divided by the patch size.
-        width: Width of the original input image divided by the patch size.
         amount: Amount of shift.
 
     Returns:
@@ -104,14 +103,20 @@ def create_shift2d_op(height: int, width: int, amount: int = 1) -> Callable[[jnp
     """
 
     def shift2d(x: jnp.ndarray) -> jnp.ndarray:
-        x = rearrange(x, "... (h w) c -> ... h w c", h=height, w=width)
         x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
-        x1 = x1.at[amount:].set(x1[:-amount])
-        x2 = x2.at[:-amount].set(x2[amount:])
-        x3 = x3.at[:, amount:].set(x3[:, :-amount])
-        x4 = x4.at[:, :-amount].set(x4[:, amount:])
+
+        # Handle variable tensor shapes.
+        hslice_from1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(amount, None, None),)
+        hslice_end1 = (slice(None, None, None),) * (x1.ndim - 3) + (slice(None, -amount, None),)
+        wslice_from1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(amount, None, None),)
+        wslice_end1 = (slice(None, None, None),) * (x1.ndim - 2) + (slice(None, -amount, None),)
+
+        x1 = x1.at[hslice_from1].set(x1[hslice_end1])
+        x2 = x2.at[hslice_end1].set(x2[hslice_from1])
+        x3 = x3.at[wslice_from1].set(x3[wslice_end1])
+        x4 = x4.at[wslice_end1].set(x4[wslice_from1])
+
         x = jnp.concatenate([x1, x2, x3, x4], axis=-1)
-        x = rearrange(x, "... h w c -> ... (h w) c")
         return x
 
     return shift2d
