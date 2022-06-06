@@ -126,8 +126,8 @@ class DropPath(hk.Module):
 
     Args:
         rate: Probability of dropping an element.
-        mode: Whether to operate on individual samples in a batch or the whole batch. Defaults to "batch". Must be set
-            "batch" when `vmap` is used.
+        mode: Whether to operate on individual samples in a batch or the whole batch. Must be "sample" or "batch".
+            Defaults to "batch". Must be set "batch" when `vmap` is used.
         name: Name of the module.
 
     References:

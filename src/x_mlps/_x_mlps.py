@@ -30,6 +30,8 @@ class XSublayer(hk.Module):
         residual (bool): Whether to add a residual/skip connection. Defaults to `True`.
         p_drop_path (float): Probability of the core computation being dropped. Only applicable if `residual` is `True`.
             Defaults to 0.0.
+        drop_path_mode: Whether to operate on individual samples in a batch or the whole batch. Must be "sample" or
+            "batch". Defaults to "batch". Must be set "batch" when `vmap` is used.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "ff_" are passed to the feedforward layer factory function.
             All arguments starting with "prenorm_" are passed to the pre-normalization layer factory function.
@@ -111,6 +113,8 @@ class XBlock(hk.Module):
         residual (bool): Whether to add a residual/skip connection. Defaults to `False`.
         p_drop_path (float): Probability of the core computation being dropped. Passed directly
             to sublayers. This will also be applied at the block level if residual is `True`. Defaults to 0.0.
+        drop_path_mode: Whether to operate on individual samples in a batch or the whole batch. Must be "sample" or
+            "batch". Defaults to "batch". Must be set "batch" when `vmap` is used.
         name (str, optional): The name of the module. Defaults to None.
         **kwargs: All arguments starting with "sublayers_" are passed to all sublayers. All arguments starting with
             "sublayer{i}_" are passed to the i-th sublayer.
